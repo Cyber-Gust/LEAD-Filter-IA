@@ -57,7 +57,7 @@ app.post('/webhook', async (req, res) => {
         4. Quando tiver todas as informações (nome, email, interesse), agradeça de forma personalizada e diga que um especialista entrará em contato em breve com todos os detalhes.
 
         **REGRAS IMPORTANTES:**
-        - Mantenha as respostas curtas, amigáveis e conversacionais. Use emojis sutis (😊, 👋) quando parecer natural.
+        - Mantenha as respostas curtas e conversacionais. Use emojis sutis (😊, 👋) quando parecer natural.
         - NUNCA forneça preços, condições de pagamento ou detalhes técnicos. Sua função é apenas o primeiro contato.
         - Adapte-se ao que o cliente diz. Se ele fizer uma pergunta, responda antes de continuar o fluxo.
 
@@ -84,18 +84,55 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`Resposta enviada para ${numeroCliente}: "${respostaBot}"`);
 
-        // --- "Mágica" para a Demo: Extração de Dados ---
-        // Em uma aplicação real, aqui você usaria uma função mais sofisticada
-        // para extrair NOME, EMAIL e INTERESSE do `historicoDaConversa`.
-        // Para a demo, vamos apenas simular essa extração quando a conversa termina.
+        // --- Extração de Dados Reais ao Final da Conversa ---
         if (respostaBot.toLowerCase().includes("especialista entrará em contato")) {
+            console.log("\n--- Conversa finalizada. Iniciando extração de dados... ---");
+
+            // Prompt específico para pedir ao Gemini que extraia os dados e retorne em JSON
+            const promptExtracao = `
+                Baseado no seguinte histórico de conversa, extraia o nome do cliente, o email e o empreendimento de interesse.
+                Retorne a resposta APENAS em formato JSON.
+                Se alguma informação não for encontrada, use o valor null.
+
+                Exemplo de formato de saída:
+                {
+                  "nome": "Fulano de Tal",
+                  "email": "fulano@email.com",
+                  "interesse": "Residencial Vista do Vale"
+                }
+
+                HISTÓRICO DA CONVERSA:
+                ---
+                ${CONVERSAS_ATIVAS[numeroCliente].historico}
+                ---
+            `;
+
+            const extracaoResult = await model.generateContent(promptExtracao);
+            const textoExtraido = extracaoResult.response.text();
+
+            let dadosColetados;
+            try {
+                // Tenta interpretar a resposta JSON do Gemini.
+                dadosColetados = JSON.parse(textoExtraido);
+                console.log("Dados extraídos com sucesso:", dadosColetados);
+            } catch (e) {
+                console.error("Falha ao interpretar JSON da extração. Usando dados de fallback.", e);
+                // Fallback caso a extração falhe, para a demo não quebrar.
+                dadosColetados = {
+                    nome: "Não foi possível extrair",
+                    email: "Não foi possível extrair",
+                    interesse: "Não foi possível extrair",
+                };
+            }
+
             const dadosFinais = {
-                nome: "João Silva (simulado)",
-                email: "joao.silva@email.com (simulado)",
-                interesse: "Residencial Vista do Vale (simulado)",
+                nome: dadosColetados.nome,
+                email: dadosColetados.email,
+                interesse: dadosColetados.interesse,
                 telefone: numeroCliente,
                 historicoCompleto: CONVERSAS_ATIVAS[numeroCliente].historico
             };
+
             console.log("\n--- LEAD QUALIFICADO! ---");
             console.log("Dados prontos para enviar para o CRM:");
             console.log(JSON.stringify(dadosFinais, null, 2));
