@@ -1,54 +1,60 @@
+// server.js
+
+// --- 1. Configuração Inicial ---
 require('dotenv').config();
 const express = require('express');
 const twilio = require('twilio');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// --- Configurações ---
+// --- 2. Inicialização dos Serviços ---
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 
+// Inicializa o cliente da Twilio com as credenciais do ambiente
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+// Inicializa o cliente do Gemini com a chave de API do ambiente
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-const DADOS_COLETADOS = {}; // Objeto simples para guardar os dados na memória durante a demo
+// --- 3. Memória da Conversa ---
+// Objeto para armazenar as conversas ativas, usando o número do cliente como chave.
+// Isso garante que o bot lembre do histórico de cada pessoa.
+const CONVERSAS_ATIVAS = {};
 
-// --- O Webhook que a Twilio vai chamar ---
+// --- 4. Webhook Principal (Onde a Mágica Acontece) ---
 app.post('/webhook', async (req, res) => {
     const mensagemRecebida = req.body.Body;
-    const numeroCliente = req.body.From;
+    const numeroCliente = req.body.From; // ex: 'whatsapp:+5511999998888'
 
+    console.log(`\n---------------------------------`);
     console.log(`Mensagem recebida de ${numeroCliente}: "${mensagemRecebida}"`);
 
-    // --- Gerenciamento do Histórico da Conversa ---
+    // --- Gerenciamento do Histórico ---
+    // Se for a primeira mensagem do cliente, cria um novo histórico.
     if (!CONVERSAS_ATIVAS[numeroCliente]) {
-        // Inicia uma nova conversa se for o primeiro contato
         CONVERSAS_ATIVAS[numeroCliente] = {
             historico: `Cliente: ${mensagemRecebida}\n`,
-            dadosColetados: {
-                nome: null,
-                email: null,
-                interesse: null
-            }
         };
+        console.log(`Nova conversa iniciada para ${numeroCliente}.`);
     } else {
-        // Adiciona a nova mensagem ao histórico existente
+        // Se a conversa já existe, apenas adiciona a nova mensagem.
         CONVERSAS_ATIVAS[numeroCliente].historico += `Cliente: ${mensagemRecebida}\n`;
     }
 
     const historicoDaConversa = CONVERSAS_ATIVAS[numeroCliente].historico;
 
-    // --- Lógica com o Gemini ---
+    // --- O Prompt Inteligente para o Gemini ---
     const prompt = `
         Você é Heloísa, uma consultora especialista da nossa construtora de alto padrão. Sua personalidade é carismática, atenciosa e muito humana. Você NUNCA soa como um robô.
 
         Seu objetivo é ter uma conversa amigável e natural para conhecer o cliente e entender seus interesses. Conduza o diálogo passo a passo, fazendo UMA PERGUNTA POR VEZ.
 
         **FLUXO DA CONVERSA IDEAL:**
-        1.  Comece se apresentando de forma calorosa e perguntando o nome do cliente.
-        2.  Depois de obter o nome, continue a conversa e pergunte o melhor email para contato.
-        3.  Em seguida, pergunte sobre qual de nossos empreendimentos ele tem interesse. Sugira algumas opções como "Residencial Vista do Vale" ou "Torres do Atlântico" para facilitar.
-        4.  Quando tiver todas as informações (nome, email, interesse), agradeça de forma personalizada e diga que um especialista entrará em contato em breve com todos os detalhes.
+        1. Comece se apresentando de forma calorosa e perguntando o nome do cliente.
+        2. Depois de obter o nome, continue a conversa e pergunte o melhor email para contato.
+        3. Em seguida, pergunte sobre qual de nossos empreendimentos ele tem interesse. Sugira algumas opções como "Residencial Vista do Vale" ou "Torres do Atlântico" para facilitar.
+        4. Quando tiver todas as informações (nome, email, interesse), agradeça de forma personalizada e diga que um especialista entrará em contato em breve com todos os detalhes.
 
         **REGRAS IMPORTANTES:**
         - Mantenha as respostas curtas, amigáveis e conversacionais. Use emojis sutis (😊, 👋) quando parecer natural.
@@ -62,28 +68,31 @@ app.post('/webhook', async (req, res) => {
     `;
 
     try {
+        // --- Geração da Resposta com IA ---
         const result = await model.generateContent(prompt);
         const respostaBot = result.response.text();
 
-        // Adiciona a resposta do bot ao histórico para a próxima interação
+        // Adiciona a resposta da Heloísa ao histórico para a próxima interação
         CONVERSAS_ATIVAS[numeroCliente].historico += `Heloísa: ${respostaBot}\n`;
 
-        // Envia a resposta de volta para o cliente via Twilio
+        // --- Envio da Resposta via Twilio ---
         await twilioClient.messages.create({
             body: respostaBot,
-            from: 'whatsapp:+14155238886', // Número da Sandbox da Twilio
+            from: 'whatsapp:+14155238886', // Seu número da Sandbox da Twilio
             to: numeroCliente
         });
 
         console.log(`Resposta enviada para ${numeroCliente}: "${respostaBot}"`);
 
-        // --- "Mágica" para a Demo (um pouco mais inteligente) ---
-        // Vamos apenas simular a extração para o log, a lógica real seria mais complexa
+        // --- "Mágica" para a Demo: Extração de Dados ---
+        // Em uma aplicação real, aqui você usaria uma função mais sofisticada
+        // para extrair NOME, EMAIL e INTERESSE do `historicoDaConversa`.
+        // Para a demo, vamos apenas simular essa extração quando a conversa termina.
         if (respostaBot.toLowerCase().includes("especialista entrará em contato")) {
             const dadosFinais = {
-                nome: "Extraído da Conversa (Simulado)",
-                email: "extraido@email.com (Simulado)",
-                interesse: "Torres do Atlântico (Simulado)",
+                nome: "João Silva (simulado)",
+                email: "joao.silva@email.com (simulado)",
+                interesse: "Residencial Vista do Vale (simulado)",
                 telefone: numeroCliente,
                 historicoCompleto: CONVERSAS_ATIVAS[numeroCliente].historico
             };
@@ -92,10 +101,11 @@ app.post('/webhook', async (req, res) => {
             console.log(JSON.stringify(dadosFinais, null, 2));
             console.log("-------------------------\n");
             
-            // Limpa a conversa para um novo contato futuro
+            // Limpa a conversa para que o mesmo número possa começar de novo depois.
             delete CONVERSAS_ATIVAS[numeroCliente];
         }
 
+        // Responde à Twilio que tudo ocorreu bem.
         res.status(200).send();
 
     } catch (error) {
@@ -104,8 +114,9 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- Inicia o Servidor ---
-const PORT = process.env.PORT || 3000; // O Render vai fornecer o process.env.PORT
+// --- 5. Inicialização do Servidor ---
+// Usa a porta fornecida pelo Render ou a 3000 como padrão.
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}.`);
+    console.log(`Servidor de demonstração rodando na porta ${PORT}. Aguardando conexões...`);
 });
