@@ -19,8 +19,44 @@ const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // --- 3. Memória da Conversa ---
 // Objeto para armazenar as conversas ativas, usando o número do cliente como chave.
-// Isso garante que o bot lembre do histórico de cada pessoa.
 const CONVERSAS_ATIVAS = {};
+
+// --- NOVA FUNÇÃO: Lógica de Retentativa com Espera (Exponential Backoff) ---
+/**
+ * Tenta gerar conteúdo com o modelo, fazendo novas tentativas em caso de sobrecarga (erro 503).
+ * @param {string} prompt O prompt a ser enviado para o modelo.
+ * @param {number} maxRetries O número máximo de tentativas.
+ * @returns {Promise<import('@google/generative-ai').GenerateContentResult>} O resultado da geração de conteúdo.
+ */
+async function generateContentWithRetry(prompt, maxRetries = 3) {
+    let attempt = 0;
+    let delay = 1000; // Começa com 1 segundo de espera
+
+    while (attempt < maxRetries) {
+        try {
+            // Tenta gerar o conteúdo
+            const result = await model.generateContent(prompt);
+            return result; // Se funcionar, retorna o resultado
+        } catch (error) {
+            // Verifica se o erro é de sobrecarga (503)
+            if (error.status === 503 && attempt < maxRetries - 1) {
+                console.warn(`Modelo sobrecarregado (503). Tentando novamente em ${delay / 1000}s... (Tentativa ${attempt + 1}/${maxRetries})`);
+                // Espera o tempo de delay
+                await new Promise(resolve => setTimeout(resolve, delay));
+                // Aumenta o delay para a próxima tentativa (espera exponencial)
+                delay *= 2;
+                attempt++;
+            } else {
+                // Se for outro erro ou a última tentativa, lança o erro para ser tratado externamente
+                console.error("Erro final ao chamar a API do Gemini após múltiplas tentativas:", error);
+                throw error;
+            }
+        }
+    }
+    // Lança um erro se todas as tentativas falharem
+    throw new Error("Não foi possível obter resposta do modelo após várias tentativas.");
+}
+
 
 // --- 4. Webhook Principal (Onde a Mágica Acontece) ---
 app.post('/webhook', async (req, res) => {
@@ -31,14 +67,12 @@ app.post('/webhook', async (req, res) => {
     console.log(`Mensagem recebida de ${numeroCliente}: "${mensagemRecebida}"`);
 
     // --- Gerenciamento do Histórico ---
-    // Se for a primeira mensagem do cliente, cria um novo histórico.
     if (!CONVERSAS_ATIVAS[numeroCliente]) {
         CONVERSAS_ATIVAS[numeroCliente] = {
             historico: `Cliente: ${mensagemRecebida}\n`,
         };
         console.log(`Nova conversa iniciada para ${numeroCliente}.`);
     } else {
-        // Se a conversa já existe, apenas adiciona a nova mensagem.
         CONVERSAS_ATIVAS[numeroCliente].historico += `Cliente: ${mensagemRecebida}\n`;
     }
 
@@ -68,11 +102,10 @@ app.post('/webhook', async (req, res) => {
     `;
 
     try {
-        // --- Geração da Resposta com IA ---
-        const result = await model.generateContent(prompt);
+        // --- Geração da Resposta com IA (usando a nova função com retentativa) ---
+        const result = await generateContentWithRetry(prompt);
         const respostaBot = result.response.text();
 
-        // Adiciona a resposta da Heloísa ao histórico para a próxima interação
         CONVERSAS_ATIVAS[numeroCliente].historico += `Heloísa: ${respostaBot}\n`;
 
         // --- Envio da Resposta via Twilio ---
@@ -87,42 +120,33 @@ app.post('/webhook', async (req, res) => {
         // --- Extração de Dados Reais ao Final da Conversa ---
         if (respostaBot.toLowerCase().includes("especialista entrará em contato")) {
             console.log("\n--- Conversa finalizada. Iniciando extração de dados... ---");
-
-            // Prompt específico para pedir ao Gemini que extraia os dados e retorne em JSON
             const promptExtracao = `
                 Baseado no seguinte histórico de conversa, extraia o nome do cliente, o email e o empreendimento de interesse.
-                Retorne a resposta APENAS em formato JSON.
-                Se alguma informação não for encontrada, use o valor null.
-
-                Exemplo de formato de saída:
-                {
-                  "nome": "Fulano de Tal",
-                  "email": "fulano@email.com",
-                  "interesse": "Residencial Vista do Vale"
-                }
-
+                Retorne a resposta APENAS em formato JSON. Se alguma informação não for encontrada, use o valor null.
+                Exemplo de formato de saída: { "nome": "Fulano de Tal", "email": "fulano@email.com", "interesse": "Residencial Vista do Vale" }
                 HISTÓRICO DA CONVERSA:
                 ---
                 ${CONVERSAS_ATIVAS[numeroCliente].historico}
                 ---
             `;
 
-            const extracaoResult = await model.generateContent(promptExtracao);
-            const textoExtraido = extracaoResult.response.text();
+            const extracaoResult = await generateContentWithRetry(promptExtracao);
+            let textoExtraido = extracaoResult.response.text();
 
             let dadosColetados;
             try {
-                // Tenta interpretar a resposta JSON do Gemini.
-                dadosColetados = JSON.parse(textoExtraido);
-                console.log("Dados extraídos com sucesso:", dadosColetados);
+                const match = textoExtraido.match(/\{[\s\S]*\}/);
+                if (match) {
+                    const jsonString = match[0];
+                    dadosColetados = JSON.parse(jsonString);
+                    console.log("Dados extraídos com sucesso:", dadosColetados);
+                } else {
+                    throw new Error("Nenhum objeto JSON encontrado na resposta da IA.");
+                }
             } catch (e) {
                 console.error("Falha ao interpretar JSON da extração. Usando dados de fallback.", e);
-                // Fallback caso a extração falhe, para a demo não quebrar.
-                dadosColetados = {
-                    nome: "Não foi possível extrair",
-                    email: "Não foi possível extrair",
-                    interesse: "Não foi possível extrair",
-                };
+                console.error("Resposta recebida da IA que causou o erro:", textoExtraido);
+                dadosColetados = { nome: "Não foi possível extrair", email: "Não foi possível extrair", interesse: "Não foi possível extrair" };
             }
 
             const dadosFinais = {
@@ -138,21 +162,17 @@ app.post('/webhook', async (req, res) => {
             console.log(JSON.stringify(dadosFinais, null, 2));
             console.log("-------------------------\n");
             
-            // Limpa a conversa para que o mesmo número possa começar de novo depois.
             delete CONVERSAS_ATIVAS[numeroCliente];
         }
 
-        // Responde à Twilio que tudo ocorreu bem.
         res.status(200).send();
-
     } catch (error) {
-        console.error("Erro ao chamar a API do Gemini ou Twilio:", error);
+        console.error("Erro final no webhook após todas as tentativas:", error);
         res.status(500).send();
     }
 });
 
 // --- 5. Inicialização do Servidor ---
-// Usa a porta fornecida pelo Render ou a 3000 como padrão.
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor de demonstração rodando na porta ${PORT}. Aguardando conexões...`);
