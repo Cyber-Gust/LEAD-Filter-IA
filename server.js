@@ -77,7 +77,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // --- Inicia o Servidor ---
-const PORT = 3000;
+const PORT = process.env.PORT || 3000; // O Render vai fornecer o process.env.PORT
 app.listen(PORT, () => {
-    console.log(`Servidor de demonstração rodando na porta ${PORT}. Aguardando conexões da Twilio...`);
+    console.log(`Servidor rodando na porta ${PORT}.`);
 });
