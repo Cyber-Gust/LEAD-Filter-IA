@@ -87,7 +87,7 @@ app.post('/webhook', async (req, res) => {
         **FLUXO DA CONVERSA IDEAL:**
         1. Comece se apresentando de forma calorosa e perguntando o nome do cliente.
         2. Depois de obter o nome, continue a conversa e pergunte o melhor email para contato.
-        3. Em seguida, pergunte sobre qual de nossos empreendimentos ele tem interesse. Sugira algumas opções como "Residencial Vista do Vale" ou "Torres do Atlântico" para facilitar.
+        3. Em seguida, pergunte sobre qual de nossos empreendimentos ele tem interesse. Sugira algumas opções como "Sollare Residencial Clube" ou "Acrópole" para facilitar.
         4. Quando tiver todas as informações (nome, email, interesse), agradeça de forma personalizada e diga que um especialista entrará em contato em breve com todos os detalhes.
 
         **REGRAS IMPORTANTES:**
