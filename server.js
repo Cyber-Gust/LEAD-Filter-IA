@@ -15,7 +15,7 @@ const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_A
 
 // Inicializa o cliente do Gemini com a chave de API do ambiente
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.0-pro" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // --- 3. Memória da Conversa ---
 // Objeto para armazenar as conversas ativas, usando o número do cliente como chave.
