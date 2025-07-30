@@ -1,0 +1,9 @@
+# Arquivos de ambiente
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Dependências (se for um projeto Node.js)
+/node_modules
